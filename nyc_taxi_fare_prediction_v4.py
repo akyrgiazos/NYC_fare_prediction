@@ -15,8 +15,6 @@ from sklearn.cluster import MiniBatchKMeans
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import KFold
-#import os
-#import sys
 import gc
 #print(os.listdir("./input"))
 
@@ -56,11 +54,12 @@ def prepare_distance_features(df):
     return df
 
 
-def cluster_routes (train_df,test_df,num_cluster=500):
+def cluster_routes (train_df,test_df,num_cluster=200):
     coords = ['pickup_latitude',  'pickup_longitude']
     coordsoff=['dropoff_latitude', 'dropoff_longitude']
     concat = np.vstack([train_df.loc[:,coords+coordsoff].values,test_df[coords+coordsoff].values])
-    db =  MiniBatchKMeans(init='k-means++', n_clusters=num_cluster, batch_size=10*6,n_init=100, max_no_improvement=400, verbose=0,random_state=0).fit(concat)
+    db =  MiniBatchKMeans(init='k-means++', n_clusters=num_cluster, batch_size=10*6,n_init=10, 
+                            init_size=2*num_cluster,max_no_improvement=400, verbose=0,random_state=0).fit(concat)
     labels = db.labels_
     train_df['cluster'] = labels[:train_df.shape[0]]
     test_df['cluster'] = labels[train_df.shape[0]:]
@@ -70,8 +69,9 @@ def cluster_routes (train_df,test_df,num_cluster=500):
 def read_csv_sampled(path, frac, chunksize=10**5, random_state=None,train=True):
     samples = []
 
-    for df_chunk in tqdm(pd.read_csv(path, chunksize=chunksize)):
-        df_chunk = df_chunk.sample(frac=frac, random_state=random_state)
+    for df_chunk in tqdm(pd.read_csv(path, chunksize=chunksize,nrows=20_000_000)):
+        if train:
+            df_chunk = df_chunk.sample(frac=frac, random_state=random_state)
         df_chunk['pickup_datetime'] = df_chunk['pickup_datetime'].apply(pd.Timestamp).dt.tz_convert(None)
         df_chunk['weekday'] = df_chunk['pickup_datetime'].apply(lambda x: x.weekday())
         df_chunk['request_year'] = df_chunk['pickup_datetime'].apply(lambda x: x.year)
@@ -163,67 +163,67 @@ def airport_feats(train,test_df):
         #pickup jfk
         data['pickup_distance_to_jfk'] = dist(jfk[1], jfk[0],
                                              data['pickup_latitude'], data['pickup_longitude'])
-        data['pickup_to_jfk'] = 0
-        data.loc[data['pickup_distance_to_jfk']<0.1,'pickup_to_jfk'] = 1
+        #data['pickup_to_jfk'] = 0
+        #data.loc[data['pickup_distance_to_jfk']<0.1,'pickup_to_jfk'] = 1
         
         # dropoff jfk
         data['dropoff_distance_to_jfk'] = dist(jfk[1], jfk[0],
                                                data['dropoff_latitude'], data['dropoff_longitude'])
-        data['dropoff_to_jfk'] = 0
-        data.loc[data['dropoff_distance_to_jfk']<0.1,'dropoff_to_jfk'] = 1
+        #data['dropoff_to_jfk'] = 0
+        #data.loc[data['dropoff_distance_to_jfk']<0.1,'dropoff_to_jfk'] = 1
 
         #pickup ewr
-        data['pickup_to_ewr'] = 0
+        #data['pickup_to_ewr'] = 0
         data['pickup_distance_to_ewr'] = dist(ewr[1], ewr[0], 
                                               data['pickup_latitude'], data['pickup_longitude'])
-        data.loc[data['pickup_distance_to_ewr']<0.1,'pickup_to_ewr'] = 1
+        #data.loc[data['pickup_distance_to_ewr']<0.1,'pickup_to_ewr'] = 1
 
         #dropoff ewr
         data['dropoff_distance_to_ewr'] = dist(ewr[1], ewr[0],
                                                data['dropoff_latitude'], data['dropoff_longitude'])
-        data['dropoff_to_ewr'] = 0
-        data.loc[data['dropoff_distance_to_ewr']<0.1,'dropoff_to_ewr'] = 1
+        #data['dropoff_to_ewr'] = 0
+        #data.loc[data['dropoff_distance_to_ewr']<0.1,'dropoff_to_ewr'] = 1
 
         #pickup lgr
         data['pickup_distance_to_lgr'] = dist(lgr[1], lgr[0],
                                               data['pickup_latitude'], data['pickup_longitude'])
-        data['pickup_to_lgr'] = 0
-        data.loc[data['pickup_distance_to_lgr']<0.1,'pickup_to_lgr'] = 1
+        #data['pickup_to_lgr'] = 0
+        #data.loc[data['pickup_distance_to_lgr']<0.1,'pickup_to_lgr'] = 1
 
 
         #dropoff lgr
         data['dropoff_distance_to_lgr'] = dist(lgr[1], lgr[0],
                                                data['dropoff_latitude'], data['dropoff_longitude'])
-        data['dropoff_to_lgr'] = 0
-        data.loc[data['dropoff_distance_to_lgr']<0.1,'dropoff_to_lgr'] = 1
+        #data['dropoff_to_lgr'] = 0
+        #data.loc[data['dropoff_distance_to_lgr']<0.1,'dropoff_to_lgr'] = 1
         #data.drop(['pickup_distance_to_jfk','dropoff_distance_to_jfk','pickup_distance_to_ewr','dropoff_distance_to_ewr','pickup_distance_to_lgr',
         #	'dropoff_distance_to_lgr'],axis=1,inplace=True)
 
     return train, test_df
 
 def memory_reduce(df):
-    df['weekday'] = df['weekday'].astype('category')
-    df['request_month'] = df['request_month'].astype('category')
-    df['request_day'] = df['request_day'].astype('category')
-    df['dayofyear'] = df['dayofyear'].astype('category')
-    df['request_hour'] = df['request_hour'].astype('category')
-    df['request_year'] = df['request_year'].astype('category')
-    df['cluster'] = df['cluster'].astype("category")
-    df['pickup_to_jfk'] = df['pickup_to_jfk'].astype('category')
-    df['dropoff_to_jfk'] = df['dropoff_to_jfk'].astype('category')
-    df['pickup_to_ewr'] = df['pickup_to_ewr'].astype('category')
-    df['dropoff_to_ewr'] = df['dropoff_to_ewr'].astype('category')
-    df['pickup_to_lgr'] = df['pickup_to_lgr'].astype('category')
-    df['dropoff_to_lgr'] = df['dropoff_to_lgr'].astype('category') 
+    df['weekday'] = df['weekday'].astype('category').cat.codes
+    df['request_month'] = df['request_month'].astype('category').cat.codes
+    df['request_day'] = df['request_day'].astype('category').cat.codes
+    df['dayofyear'] = df['dayofyear'].astype('category').cat.codes
+    df['request_hour'] = df['request_hour'].astype('category').cat.codes
+    df['request_year'] = df['request_year'].astype('category').cat.codes
+    df['cluster'] = df['cluster'].astype("category").cat.codes
+    df['weekofyear'] = df['weekofyear'].astype('category').cat.codes
+    df['quarter'] = df['quarter'].astype('category').cat.codes
     
     return df
 
 def modelling(train,y,num_splits=5):
     trainshape = train.shape
     #testshape = test.shape
-
+    categorical = ['weekday','request_month','request_day','dayofyear','request_hour','request_year','cluster','weekofyear','quarter']
     # LGBM Dataset Formating
-    dtrain = lgb.Dataset(train, label=y, free_raw_data=False)
+    predictors = train.columns.get_values().tolist()
+    dtrain = lgb.Dataset(train, label=y, feature_name=predictors, categorical_feature=categorical,free_raw_data=False)
+    #train_data_v1 = lightgbm.Dataset(train[predictors],label=train['is_attributed'],feature_name=predictors, categorical_feature=categorical)
+    dtrain.save_binary('train_v1.bin')
+    dtrain = lightgbm.Dataset('train_v1.bin', feature_name=predictors, categorical_feature=categorical)
     print("Light Gradient Boosting Regressor: ")
     lgbm_params =  {
         'task': 'train',
@@ -243,6 +243,8 @@ def modelling(train,y,num_splits=5):
     #fold_preds = np.zeros(testshape[0])
     #fold_preds_exp = np.zeros(testshape[0])
     oof_preds = np.zeros(trainshape[0])
+    # format 
+   
     dtrain.construct()
 
     models = []
@@ -270,7 +272,7 @@ def modelling(train,y,num_splits=5):
 def main():
     filename="./input/train.csv"
     filenametest="./input/test.csv"
-    train=read_csv_sampled(filename,0.07, random_state=1989)
+    train=read_csv_sampled(filename,0.5, random_state=1989)
     print(train.shape)
     gc.collect()
 
@@ -288,7 +290,8 @@ def main():
     print(test.isnull().values.any())
     assert checkdata(train,test), "Houston we've got a problem"
 
-    train,test = cluster_routes(train,test,num_cluster=1000)
+    train,test = cluster_routes(train,test,num_cluster=200)
+    print(train.groupby('cluster').size())
     dist_types = ['euclidean','canberra','cityblock']
 
     train = add_distances(train,dist_types)
@@ -318,8 +321,12 @@ def main():
     submission.to_csv('submission_local.csv', index = False)
 
     print("Notebook Runtime: %0.2f Minutes"%((time.time() - notebookstart)/60))
-    ax = lgb.plot_importance(models[-1], max_num_features=50)
-    plt.show()
+    d2 = {'Feature':train.columns,'LGB_Importance' : models[-1].booster_.feature_importance(importance_type='split')}
+    features_import = pd.DataFrame(data=d2)
+    features_import = features_import.sort_values(['LGB_Importance'], ascending = False)
+    features_import.to_csv('lgb_features.csv', index = False)
+    #ax = lgb.plot_importance(models[-1], max_num_features=50)
+    #plt.show()
 
 if __name__== "__main__":
     main() 
