@@ -15,6 +15,8 @@ from sklearn.cluster import MiniBatchKMeans
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import KFold
+#import os
+#import sys
 import gc
 #print(os.listdir("./input"))
 
@@ -53,23 +55,55 @@ def prepare_distance_features(df):
 
     return df
 
+def define_daytime(hour):
+    if hour<7:
+        return "overnight"
+    else:
+        if hour<11:
+            return "morning"
+        else:
+            if hour<16:
+                return "noon"
+            else:
+                if hour<20:
+                    return "evening"
+                else:
+                    if hour<23:
+                        return 'night'
+                    else:
+                        return 'overnight'
 
-def cluster_routes (train_df,test_df,num_cluster=200):
+
+def prepare_time_features(df):
+    df['hour_class'] = ""
+    df.loc[(df['request_hour']<7) and (df['request_hour']>23),'hour_class'] = 'overnight'
+    df.loc[(df['request_hour']<11) and (df['request_hour']>7),'hour_class'] = 'morning'
+    df.loc[(df['request_hour']<16) and (df['request_hour']>11),'hour_class'] = 'noon'
+    df.loc[(df['request_hour']<23) and (df['request_hour']>16),'hour_class'] = 'evening'
+
+    return df
+
+
+def cluster_routes (train_df,test_df,num_cluster=500):
     coords = ['pickup_latitude',  'pickup_longitude']
     coordsoff=['dropoff_latitude', 'dropoff_longitude']
     concat = np.vstack([train_df.loc[:,coords+coordsoff].values,test_df[coords+coordsoff].values])
-    db =  MiniBatchKMeans(init='k-means++', n_clusters=num_cluster, batch_size=10*6,n_init=10, 
-                            init_size=2*num_cluster,max_no_improvement=400, verbose=0,random_state=0).fit(concat)
+    db =  MiniBatchKMeans(init='k-means++', n_clusters=num_cluster, batch_size=10*6,n_init=10, max_no_improvement=400, verbose=0,random_state=0).fit(concat)
     labels = db.labels_
     train_df['cluster'] = labels[:train_df.shape[0]]
     test_df['cluster'] = labels[train_df.shape[0]:]
+    concat = np.vstack([train_df.loc[:,coords].values,test_df[coords].values])
+    db =  MiniBatchKMeans(init='k-means++', n_clusters=num_cluster, batch_size=10*6,n_init=10, max_no_improvement=400, verbose=0,random_state=0).fit(concat)
+    labels = db.labels_
+    train_df['pickup_cluster'] = labels[:train_df.shape[0]]
+    test_df['pickup_cluster'] = labels[train_df.shape[0]:]
     return train_df,test_df
 
 
 def read_csv_sampled(path, frac, chunksize=10**5, random_state=None,train=True):
     samples = []
 
-    for df_chunk in tqdm(pd.read_csv(path, chunksize=chunksize,nrows=20_000_000)):
+    for df_chunk in tqdm(pd.read_csv(path, chunksize=chunksize,nrows=20000000)):
         if train:
             df_chunk = df_chunk.sample(frac=frac, random_state=random_state)
         df_chunk['pickup_datetime'] = df_chunk['pickup_datetime'].apply(pd.Timestamp).dt.tz_convert(None)
@@ -202,28 +236,30 @@ def airport_feats(train,test_df):
     return train, test_df
 
 def memory_reduce(df):
-    df['weekday'] = df['weekday'].astype('category').cat.codes
-    df['request_month'] = df['request_month'].astype('category').cat.codes
-    df['request_day'] = df['request_day'].astype('category').cat.codes
-    df['dayofyear'] = df['dayofyear'].astype('category').cat.codes
-    df['request_hour'] = df['request_hour'].astype('category').cat.codes
-    df['request_year'] = df['request_year'].astype('category').cat.codes
-    df['cluster'] = df['cluster'].astype("category").cat.codes
-    df['weekofyear'] = df['weekofyear'].astype('category').cat.codes
-    df['quarter'] = df['quarter'].astype('category').cat.codes
+    df['weekday'] = df['weekday'].astype('category')
+    df['request_month'] = df['request_month'].astype('category')
+    df['request_day'] = df['request_day'].astype('category')
+    df['dayofyear'] = df['dayofyear'].astype('category')
+    df['request_hour'] = df['request_hour'].astype('category')
+    df['request_year'] = df['request_year'].astype('category')
+    df['cluster'] = df['cluster'].astype("category")
+    df['weekofyear'] = df['weekofyear'].astype('category')
+    df['quarter'] = df['quarter'].astype('category')
+    df['pickup_cluster'] = df['pickup_cluster'].astype('category')
+    df['hour_class'] = df['hour_class'].astype('category') 
+    #df['pickup_to_ewr'] = df['pickup_to_ewr'].astype('category')
+    #df['dropoff_to_ewr'] = df['dropoff_to_ewr'].astype('category')
+    #df['pickup_to_lgr'] = df['pickup_to_lgr'].astype('category')
+    #df['dropoff_to_lgr'] = df['dropoff_to_lgr'].astype('category') 
     
     return df
 
 def modelling(train,y,num_splits=5):
     trainshape = train.shape
     #testshape = test.shape
-    categorical = ['weekday','request_month','request_day','dayofyear','request_hour','request_year','cluster','weekofyear','quarter']
+
     # LGBM Dataset Formating
-    predictors = train.columns.get_values().tolist()
-    dtrain = lgb.Dataset(train, label=y, feature_name=predictors, categorical_feature=categorical,free_raw_data=False)
-    #train_data_v1 = lightgbm.Dataset(train[predictors],label=train['is_attributed'],feature_name=predictors, categorical_feature=categorical)
-    dtrain.save_binary('train_v1.bin')
-    dtrain = lightgbm.Dataset('train_v1.bin', feature_name=predictors, categorical_feature=categorical)
+    dtrain = lgb.Dataset(train, label=y, free_raw_data=False)
     print("Light Gradient Boosting Regressor: ")
     lgbm_params =  {
         'task': 'train',
@@ -234,17 +270,18 @@ def modelling(train,y,num_splits=5):
         'num_leaves' : 31,
         'max_depth' : -1,
         'subsample' : .8,
-		'colsample_bytree' : 0.6,
-		'min_split_gain' : 0.5,
-		'min_child_weight' : 1
-                    }
+        'colsample_bytree' : 0.6,
+        'min_split_gain' : 0.5,
+        'min_child_weight' : 1,
+        'min_child_samples' : 10,
+        'scale_pos_weight' : 1,
+        'seed' : 0
+        }
 
     folds = KFold(n_splits=num_splits, shuffle=True, random_state=1)
     #fold_preds = np.zeros(testshape[0])
     #fold_preds_exp = np.zeros(testshape[0])
     oof_preds = np.zeros(trainshape[0])
-    # format 
-   
     dtrain.construct()
 
     models = []
@@ -255,8 +292,8 @@ def modelling(train,y,num_splits=5):
             params=lgbm_params,
             train_set=dtrain.subset(trn_idx),
             valid_sets=dtrain.subset(val_idx),
-            num_boost_round=3500, 
-            early_stopping_rounds=125,
+            num_boost_round=35000, 
+            early_stopping_rounds=500,
             verbose_eval=500
         )
         models.append(clf)
@@ -267,12 +304,12 @@ def modelling(train,y,num_splits=5):
     print("Model Runtime: %0.2f Minutes"%((time.time() - modelstart)/60))
 
     return models
-    
+
 
 def main():
     filename="./input/train.csv"
     filenametest="./input/test.csv"
-    train=read_csv_sampled(filename,0.5, random_state=1989)
+    train=read_csv_sampled(filename,0.1, random_state=1989)
     print(train.shape)
     gc.collect()
 
@@ -286,20 +323,24 @@ def main():
     train = prepare_distance_features(train)
     test = prepare_distance_features(test)
 
+    train = prepare_time_features(train)
+    test = prepare_time_features(test)
+
+
     print(train.isnull().values.any())
     print(test.isnull().values.any())
     assert checkdata(train,test), "Houston we've got a problem"
 
-    train,test = cluster_routes(train,test,num_cluster=200)
+    train,test = cluster_routes(train,test,num_cluster=120)
     print(train.groupby('cluster').size())
     dist_types = ['euclidean','canberra','cityblock']
 
     train = add_distances(train,dist_types)
     test = add_distances(test,dist_types)
-    train, test = time_agg(train, test,
-                          vars_to_agg  = ["cluster","passenger_count", "weekday","quarter", "request_month", "request_year","request_hour",
-                                          ['cluster',"weekday", "request_month","request_year"], ["cluster","request_hour", "weekday", "request_month","request_year"]],
-                          vars_be_agg = "fare_amount")
+    #train, test = time_agg(train, test,
+    #                      vars_to_agg  = [["cluster","weekday"],"passenger_count", "weekday","quarter", "request_month", "request_year",["cluster","request_hour"],
+    #                                      ["weekday", "request_month","request_year"], ["request_hour", "weekday", "request_month","request_year"]],
+    #                      vars_be_agg = "fare_amount")
     
     train,test = airport_feats(train,test)
     train = memory_reduce(train)
@@ -321,12 +362,8 @@ def main():
     submission.to_csv('submission_local.csv', index = False)
 
     print("Notebook Runtime: %0.2f Minutes"%((time.time() - notebookstart)/60))
-    d2 = {'Feature':train.columns,'LGB_Importance' : models[-1].booster_.feature_importance(importance_type='split')}
-    features_import = pd.DataFrame(data=d2)
-    features_import = features_import.sort_values(['LGB_Importance'], ascending = False)
-    features_import.to_csv('lgb_features.csv', index = False)
-    #ax = lgb.plot_importance(models[-1], max_num_features=50)
-    #plt.show()
+    ax = lgb.plot_importance(models[-1], importance_type='gain',max_num_features=50)
+    plt.show()
 
 if __name__== "__main__":
     main() 
