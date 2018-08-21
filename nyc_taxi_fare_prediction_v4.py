@@ -50,8 +50,8 @@ def prepare_distance_features(df):
     return df
 
 def prepare_time_features(df):
-    df['hour_class'] = " "
-    df.loc[(df['request_hour']<7) & (df['request_hour']>23),'hour_class'] = 'overnight'
+    df['hour_class'] = "overnight"
+    #df.loc[(df['request_hour']<7) & (df['request_hour']>23),'hour_class'] = 'overnight'
     df.loc[(df['request_hour']<11) & (df['request_hour']>7),'hour_class'] = 'morning'
     df.loc[(df['request_hour']<16) & (df['request_hour']>11),'hour_class'] = 'noon'
     df.loc[(df['request_hour']<23) & (df['request_hour']>16),'hour_class'] = 'evening'
@@ -68,7 +68,7 @@ def cluster_routes (train_df,test_df,num_cluster=500):
     train_df['cluster'] = labels[:train_df.shape[0]]
     test_df['cluster'] = labels[train_df.shape[0]:]
     concat = np.vstack([train_df.loc[:,coords].values,test_df[coords].values])
-    db =  MiniBatchKMeans(init='k-means++', n_clusters=num_cluster, batch_size=10*6,n_init=10, max_no_improvement=400, verbose=0,random_state=0).fit(concat)
+    db =  MiniBatchKMeans(init='k-means++', n_clusters=100, batch_size=10*6,n_init=10, max_no_improvement=400, verbose=0,random_state=0).fit(concat)
     labels = db.labels_
     train_df['pickup_cluster'] = labels[:train_df.shape[0]]
     test_df['pickup_cluster'] = labels[train_df.shape[0]:]
@@ -78,7 +78,7 @@ def cluster_routes (train_df,test_df,num_cluster=500):
 def read_csv_sampled(path, frac, chunksize=10**5, random_state=None,train=True):
     samples = []
 
-    for df_chunk in tqdm(pd.read_csv(path, chunksize=chunksize,nrows=20000000)):
+    for df_chunk in tqdm(pd.read_csv(path, chunksize=chunksize,nrows=6000000)):
         if train:
             df_chunk = df_chunk.sample(frac=frac, random_state=random_state)
         df_chunk['pickup_datetime'] = df_chunk['pickup_datetime'].apply(pd.Timestamp).dt.tz_convert(None)
@@ -106,7 +106,7 @@ def checkdata(train,test):
 
 def clean_data(df):
     df = df.dropna()
-    is_weird = (df['fare_amount'] < 0)
+    is_weird = (df['fare_amount'] <= 1)
     is_weird |= ~df['pickup_latitude'].between(35, 45)
     is_weird |= ~df['pickup_longitude'].between(-80, -70)
     is_weird |= ~df['dropoff_latitude'].between(35, 45)
@@ -262,7 +262,7 @@ def modelling(train,y,num_splits=5):
 def main():
     filename="./input/train.csv"
     filenametest="./input/test.csv"
-    train=read_csv_sampled(filename,0.1, random_state=1989)
+    train=read_csv_sampled(filename,1.0, random_state=1989)
     print(train.shape)
     gc.collect()
 
@@ -287,8 +287,15 @@ def main():
     train,test = cluster_routes(train,test,num_cluster=120)
     dist_types = ['euclidean','canberra','cityblock']
 
+    testgr = train.groupby(['cluster','hour_class'])['fare_amount'].agg(["sum","mean","std","skew","max","min"])
+    testgr.to_csv('testgroup.csv')
+
+    del testgr
+    gc.collect()
+
     train = add_distances(train,dist_types)
     test = add_distances(test,dist_types)
+    train, test = time_agg(train, test,vars_to_agg  = [["cluster","hour_class"]], vars_be_agg = "fare_amount")
     #train, test = time_agg(train, test,
     #                      vars_to_agg  = [["cluster","weekday"],"passenger_count", "weekday","quarter", "request_month", "request_year",["cluster","request_hour"],
     #                                      ["weekday", "request_month","request_year"], ["request_hour", "weekday", "request_month","request_year"]],
