@@ -5,20 +5,14 @@ import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 from scipy.spatial.distance import pdist
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-#import seaborn as sns
-plt.rcParams['figure.figsize'] = 20,9
-#import datetime
 #from sklearn.decomposition import PCA
 from sklearn.cluster import MiniBatchKMeans
-#from math import radians, cos, sin, asin, sqrt
 # Modeling
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import KFold
-#import os
-#import sys
 import gc
-#print(os.listdir("./input"))
+
 
 
 def cityblock(a,dist='cityblock'):
@@ -55,31 +49,12 @@ def prepare_distance_features(df):
 
     return df
 
-def define_daytime(hour):
-    if hour<7:
-        return "overnight"
-    else:
-        if hour<11:
-            return "morning"
-        else:
-            if hour<16:
-                return "noon"
-            else:
-                if hour<20:
-                    return "evening"
-                else:
-                    if hour<23:
-                        return 'night'
-                    else:
-                        return 'overnight'
-
-
 def prepare_time_features(df):
-    df['hour_class'] = ""
-    df.loc[(df['request_hour']<7) and (df['request_hour']>23),'hour_class'] = 'overnight'
-    df.loc[(df['request_hour']<11) and (df['request_hour']>7),'hour_class'] = 'morning'
-    df.loc[(df['request_hour']<16) and (df['request_hour']>11),'hour_class'] = 'noon'
-    df.loc[(df['request_hour']<23) and (df['request_hour']>16),'hour_class'] = 'evening'
+    df['hour_class'] = " "
+    df.loc[(df['request_hour']<7) & (df['request_hour']>23),'hour_class'] = 'overnight'
+    df.loc[(df['request_hour']<11) & (df['request_hour']>7),'hour_class'] = 'morning'
+    df.loc[(df['request_hour']<16) & (df['request_hour']>11),'hour_class'] = 'noon'
+    df.loc[(df['request_hour']<23) & (df['request_hour']>16),'hour_class'] = 'evening'
 
     return df
 
@@ -197,41 +172,27 @@ def airport_feats(train,test_df):
         #pickup jfk
         data['pickup_distance_to_jfk'] = dist(jfk[1], jfk[0],
                                              data['pickup_latitude'], data['pickup_longitude'])
-        #data['pickup_to_jfk'] = 0
-        #data.loc[data['pickup_distance_to_jfk']<0.1,'pickup_to_jfk'] = 1
         
         # dropoff jfk
         data['dropoff_distance_to_jfk'] = dist(jfk[1], jfk[0],
                                                data['dropoff_latitude'], data['dropoff_longitude'])
-        #data['dropoff_to_jfk'] = 0
-        #data.loc[data['dropoff_distance_to_jfk']<0.1,'dropoff_to_jfk'] = 1
 
         #pickup ewr
-        #data['pickup_to_ewr'] = 0
         data['pickup_distance_to_ewr'] = dist(ewr[1], ewr[0], 
                                               data['pickup_latitude'], data['pickup_longitude'])
-        #data.loc[data['pickup_distance_to_ewr']<0.1,'pickup_to_ewr'] = 1
 
         #dropoff ewr
         data['dropoff_distance_to_ewr'] = dist(ewr[1], ewr[0],
                                                data['dropoff_latitude'], data['dropoff_longitude'])
-        #data['dropoff_to_ewr'] = 0
-        #data.loc[data['dropoff_distance_to_ewr']<0.1,'dropoff_to_ewr'] = 1
 
         #pickup lgr
         data['pickup_distance_to_lgr'] = dist(lgr[1], lgr[0],
                                               data['pickup_latitude'], data['pickup_longitude'])
-        #data['pickup_to_lgr'] = 0
-        #data.loc[data['pickup_distance_to_lgr']<0.1,'pickup_to_lgr'] = 1
-
 
         #dropoff lgr
         data['dropoff_distance_to_lgr'] = dist(lgr[1], lgr[0],
                                                data['dropoff_latitude'], data['dropoff_longitude'])
-        #data['dropoff_to_lgr'] = 0
-        #data.loc[data['dropoff_distance_to_lgr']<0.1,'dropoff_to_lgr'] = 1
-        #data.drop(['pickup_distance_to_jfk','dropoff_distance_to_jfk','pickup_distance_to_ewr','dropoff_distance_to_ewr','pickup_distance_to_lgr',
-        #	'dropoff_distance_to_lgr'],axis=1,inplace=True)
+
 
     return train, test_df
 
@@ -247,10 +208,6 @@ def memory_reduce(df):
     df['quarter'] = df['quarter'].astype('category')
     df['pickup_cluster'] = df['pickup_cluster'].astype('category')
     df['hour_class'] = df['hour_class'].astype('category') 
-    #df['pickup_to_ewr'] = df['pickup_to_ewr'].astype('category')
-    #df['dropoff_to_ewr'] = df['dropoff_to_ewr'].astype('category')
-    #df['pickup_to_lgr'] = df['pickup_to_lgr'].astype('category')
-    #df['dropoff_to_lgr'] = df['dropoff_to_lgr'].astype('category') 
     
     return df
 
@@ -279,8 +236,6 @@ def modelling(train,y,num_splits=5):
         }
 
     folds = KFold(n_splits=num_splits, shuffle=True, random_state=1)
-    #fold_preds = np.zeros(testshape[0])
-    #fold_preds_exp = np.zeros(testshape[0])
     oof_preds = np.zeros(trainshape[0])
     dtrain.construct()
 
@@ -298,8 +253,6 @@ def modelling(train,y,num_splits=5):
         )
         models.append(clf)
         oof_preds[val_idx] = clf.predict(dtrain.data.iloc[val_idx])
-        #fold_preds += clf.predict(test) / folds.n_splits
-        #fold_preds_exp += np.expm1(clf.predict(test)) / folds.n_splits
         print(mean_squared_error(y.iloc[val_idx], oof_preds[val_idx]) ** .5)
     print("Model Runtime: %0.2f Minutes"%((time.time() - modelstart)/60))
 
@@ -332,7 +285,6 @@ def main():
     assert checkdata(train,test), "Houston we've got a problem"
 
     train,test = cluster_routes(train,test,num_cluster=120)
-    print(train.groupby('cluster').size())
     dist_types = ['euclidean','canberra','cityblock']
 
     train = add_distances(train,dist_types)
